@@ -36,7 +36,7 @@ def test_deepseek_W4A8(monkeypatch: pytest.MonkeyPatch):
         dtype = "bfloat16"
         max_tokens = 5
         with VllmRunner(
-                "/mnt/nfs/p30075073/w4a8_4_layer_new",
+                "vllm-ascend/DeepSeek-R1-w4a8-pruning",
                 dtype=dtype,
                 tensor_parallel_size=2,
                 enforce_eager=True,
