@@ -33,9 +33,11 @@ def test_deepseek_W4A8(monkeypatch: pytest.MonkeyPatch):
             "The capital of France is",
             "The future of AI is",
         ]
+        dtype = "bfloat16"
         max_tokens = 5
         with VllmRunner(
-                "vllm-ascend/DeepSeek-R1-w4a8-pruning",
+                "/mnt/nfs/p30075073/w4a8_4_layer_new",
+                dtype=dtype,
                 tensor_parallel_size=2,
                 enforce_eager=True,
                 quantization="ascend",
@@ -54,10 +56,10 @@ def test_deepseek_W4A8(monkeypatch: pytest.MonkeyPatch):
                                                          max_tokens)
 
         golden_results = [
-            'Hello, my name is 逸研究发现IPPudsimentary',
-            'The president of the United States is 逸 Ban Corporealistically',
-            'The capital of France is 逸 Ban Corporealistically',
-            'The future of AI is 逸 Ban Corporealistically',
+            'Hello, my name is逸研究发现IPPudsimentary',
+            'The president of the United States is逸 Ban Corporealistically',
+            'The capital of France is逸 Ban Corporealistically',
+            'The future of AI is逸 Ban Corporealistically',
         ]
         assert len(golden_results) == len(vllm_output)
         for i in range(len(vllm_output)):
