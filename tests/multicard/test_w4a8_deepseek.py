@@ -52,8 +52,7 @@ def test_deepseek_W4A8(monkeypatch: pytest.MonkeyPatch):
                 },
         ) as vllm_model:
             # use greedy sampler to make sure the generated results are fix
-            vllm_output = vllm_model.generate_greedy(prompts,
-                                                         max_tokens)
+            vllm_output = vllm_model.generate_greedy(prompts, max_tokens)
 
         golden_results = [
             'Hello, my name is逸研究发现IPPudsimentary',
