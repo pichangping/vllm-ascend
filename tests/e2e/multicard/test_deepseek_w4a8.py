@@ -37,9 +37,9 @@ def test_deepseek_W4A8(monkeypatch: pytest.MonkeyPatch):
         ]
         dtype = "bfloat16"
         max_tokens = 5
-        mode_name = snapshot_download("vllm-ascend/DeepSeek-R1-w4a8-pruning")
+        model_name = snapshot_download("vllm-ascend/DeepSeek-R1-w4a8-pruning")
         with VllmRunner(
-                mode_name,
+                model_name,
                 dtype=dtype,
                 tensor_parallel_size=2,
                 enforce_eager=True,
