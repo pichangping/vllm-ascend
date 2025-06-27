@@ -80,12 +80,13 @@ def apply_mlp(hidden_states: torch.Tensor,
     _output_dtype = w2_scale.dtype
 
     if w1_scale_bias is not None:
-        group_list_type = 1
-        if not is_mc2:
+        if group_list_type == 0:
             group_list = torch.cat(
                 [group_list[:1], torch.diff(group_list, dim=0)])
+            group_list_type = 1
         bias1 = [w1_scale_bias]
         bias2 = [w2_scale_bias]
+        # TODO w4a8 scene: dynamic acquisition of dtype in the future
         _output_dtype = torch.bfloat16
 
     # gmm1: gate_up_proj
