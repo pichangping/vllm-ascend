@@ -40,7 +40,6 @@ def apply_mlp(hidden_states: torch.Tensor,
               group_list: torch.Tensor,
               dynamic_scale: torch.Tensor = None,
               group_list_type: int = 1,
-              is_mc2: bool = False,
               w1_scale_bias: torch.Tensor = None,
               w2_scale_bias: torch.Tensor = None) -> torch.Tensor:
     """
@@ -207,7 +206,6 @@ def fused_experts_with_mc2(
                               w2_scale,
                               expert_token_nums,
                               dynamic_scale=dynamic_scale,
-                              is_mc2=True,
                               w1_scale_bias=w1_scale_bias,
                               w2_scale_bias=w2_scale_bias)
 
