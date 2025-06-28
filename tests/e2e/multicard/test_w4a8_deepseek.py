@@ -22,12 +22,12 @@ from modelscope import snapshot_download  # type: ignore
 
 from tests.conftest import VllmRunner
 
-MODELS = ["vllm-ascend/DeepSeek-R1-w4a8-pruning"]
+
+model_name=snapshot_download("vllm-ascend/DeepSeek-R1-w4a8-pruning")
 
 
 @pytest.mark.skipif(os.getenv("VLLM_USE_V1") == "0",
                     reason="w4a8_dynamic is not supported on v0")
-@pytest.mark.parametrize("model", MODELS)
 @patch.dict(os.environ, {"VLLM_USE_V1": "1", "VLLM_ASCEND_MLA_PA": "1"})
 def test_deepseek_W4A8(model: str):
     prompts = [
@@ -37,7 +37,7 @@ def test_deepseek_W4A8(model: str):
     dtype = "bfloat16"
     max_tokens = 5
     with VllmRunner(
-            model=snapshot_download(model),
+            model_name,
             dtype=dtype,
             tensor_parallel_size=2,
             quantization="ascend",
