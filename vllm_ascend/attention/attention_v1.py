@@ -703,29 +703,38 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 scale_value=self.scale,
                 out=output)
         return output
+      
+    def _out_lse_reshape(self, attn_out: torch.Tensor,
+                         attn_lse: torch.Tensor) -> torch.Tensor:
+        attn_out = attn_out.contiguous().view(
+            attn_out.shape[0] * attn_out.shape[1], attn_out.shape[2])
+        attn_lse = attn_lse.contiguous().view(
+            attn_lse.shape[0] * attn_lse.shape[1] * attn_lse.shape[2])
+        return attn_out, attn_lse
 
-    def _pack_tnd_2_bsnd(self, tensor_tnd: torch.Tensor,
-                         lengths: List[int]) -> torch.Tensor:
-        max_len = max(lengths)
-        splits = torch.split(tensor_tnd, lengths, dim=0)
+    def _npu_attention_update(
+            self, attn_out_lse_list: List[torch.Tensor]) -> torch.Tensor:
+        update_type = 0
 
-        padded = []
-        for s in splits:
-            pad_len = max_len - s.shape[0]
-            s_pad = F.pad(s, (0, 0, 0, 0, 0, pad_len))
-            padded.append(s_pad)
+        batch = attn_out_lse_list[0].shape[0]
+        num_heads = attn_out_lse_list[0].shape[1]
+        head_dim = attn_out_lse_list[0].shape[2] - 1
 
-        tensor_bsnd = torch.stack(padded, dim=0)
-        return tensor_bsnd
+        attn_out_split_cp = []
+        attn_lse_split_cp = []
 
-    def _unpack_bsnd_2_tnd(self, tensor_bsnd: torch.Tensor,
-                           lengths: List[int]) -> torch.Tensor:
-        slices = []
-        for i, length in enumerate(lengths):
-            slices.append(tensor_bsnd[i, :length])
-        tensor_tnd = torch.cat(slices, dim=0)
-        return tensor_tnd
+        for i in attn_out_lse_list:
+            attn_out_allgather, attn_lse_allgather = self._out_lse_reshape(
+                *torch.split(i, [self.head_size, 1], dim=-1))
+            attn_out_split_cp.append(attn_out_allgather)
+            attn_lse_split_cp.append(attn_lse_allgather)
 
+        attn_out, attn_lse = torch_npu.npu_attention_update(
+            attn_lse_split_cp, attn_out_split_cp, update_type)
+        attn_out = attn_out.view(batch, num_heads, head_dim)
+
+        return attn_out
+  
     def _attention_with_nomask_and_mask(self, q: torch.Tensor,
                                         q_seqlens: List[int],
                                         k_nomask: torch.Tensor,
@@ -735,17 +744,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
                                         v_mask: torch.Tensor,
                                         kv_seqlens_mask: List[int],
                                         mask: torch.Tensor) -> torch.Tensor:
-        q = self._pack_tnd_2_bsnd(q, q_seqlens)
-
         # nomask Attention
         if k_nomask is not None:
             attn_out_nomask, attn_lse_nomask = torch.ops.npu.npu_fused_infer_attention_score(
                 q,
-                self._pack_tnd_2_bsnd(k_nomask, kv_seqlens_nomask),
-                self._pack_tnd_2_bsnd(v_nomask, kv_seqlens_nomask),
+                k_nomask,
+                v_nomask,
                 num_heads=self.num_heads,
                 num_key_value_heads=self.num_kv_heads,
-                input_layout="BSND",
+                input_layout="TND",
                 atten_mask=None,
                 scale=self.scale,
                 sparse_mode=0,
@@ -754,38 +761,46 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 softmax_lse_flag=True,
                 actual_seq_lengths_kv=kv_seqlens_nomask,
                 actual_seq_lengths=q_seqlens)
-            attn_out_nomask = self._unpack_bsnd_2_tnd(attn_out_nomask,
-                                                      q_seqlens)
-            # (B, N, Q_S, 1) -> (B, Q_S, N, 1) -> (T, N, 1)
-            attn_lse_nomask = self._unpack_bsnd_2_tnd(
-                attn_lse_nomask.permute([0, 2, 1, 3]), q_seqlens)
 
         # mask Attention
         attn_out_mask, attn_lse_mask = torch.ops.npu.npu_fused_infer_attention_score(
             q,
-            self._pack_tnd_2_bsnd(k_mask, kv_seqlens_mask),
-            self._pack_tnd_2_bsnd(v_mask, kv_seqlens_mask),
+            k_mask,
+            v_mask,
             num_heads=self.num_heads,
             num_key_value_heads=self.num_kv_heads,
-            input_layout="BSND",
+            input_layout="TND",
             atten_mask=mask,
             scale=self.scale,
-            sparse_mode=0,
+            sparse_mode=3,
             antiquant_mode=0,
             antiquant_scale=None,
             softmax_lse_flag=True,
             actual_seq_lengths_kv=kv_seqlens_mask,
             actual_seq_lengths=q_seqlens)
-        attn_out_mask = self._unpack_bsnd_2_tnd(attn_out_mask, q_seqlens)
-        attn_lse_mask = self._unpack_bsnd_2_tnd(
-            attn_lse_mask.permute([0, 2, 1, 3]), q_seqlens)
 
         # update
         output = attn_out_mask
         if k_nomask is not None:
-            output, _ = self._update_out_and_lse(
-                torch.stack([attn_out_nomask, attn_out_mask], dim=0),
-                torch.stack([attn_lse_nomask, attn_lse_mask], dim=0))
+            T = attn_out_mask.shape[0]
+            N = attn_out_mask.shape[1]
+            D = attn_out_mask.shape[2]
+
+            attn_out_mask, attn_lse_mask = self._out_lse_reshape(
+                attn_out_mask, attn_lse_mask)
+            attn_out_nomask, attn_lse_nomask = self._out_lse_reshape(
+                attn_out_nomask, attn_lse_nomask)
+            attn_out_mask = attn_out_mask.to(torch.float32)
+            attn_out_nomask = attn_out_nomask.to(torch.float32)
+            attn_lse_mask = attn_lse_mask.to(torch.float32)
+            attn_lse_nomask = attn_lse_nomask.to(torch.float32)
+
+            attn_output = [attn_out_nomask, attn_out_mask]
+            attn_lse = [attn_lse_nomask, attn_lse_mask]
+            update_type = 0
+            output, _ = torch_npu.npu_attention_update(attn_lse, attn_output,
+                                                       update_type)
+            output = output.view(T, N, D)
 
         return output
 
@@ -841,21 +856,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             torch.cat([output_head, output_tail], dim=0), 0, q_full_idx)
         return output
 
-    def _update_out_and_lse(self, out_list: torch.Tensor,
-                            lse_list: torch.Tensor) -> torch.Tensor:
-        """LSE_final = log(sum(exp(LSE_i))), O_final = sum(exp(LSE_i - LSE_final) * O_i)
-        Args:
-            out_list: shape = [N, batch_size, num_heads, head_size]
-            lse_list: shape = [N, batch_size, num_heads, 1]
-        Returns:
-            out_final: shape = [batch_size, num_heads, head_size]
-            lse_final: shape = [batch_size, num_heads, 1]
-        """
-        lse_final = torch.logsumexp(lse_list, dim=0, keepdim=False)
-        out_final = torch.sum(torch.exp(lse_list - lse_final) * out_list,
-                              dim=0)
-        return out_final, lse_final
-
     def _forward_decode_pcp_dcp(self, query: torch.Tensor,
                                 attn_metadata: AscendMetadata) -> torch.Tensor:
         assert self.key_cache is not None
@@ -892,9 +892,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
         attn_out = attn_out.view(attn_out.shape[0], attn_out.shape[2],
                                  attn_out.shape[3])
         attn_lse = attn_lse.view(attn_lse.shape[0], attn_lse.shape[1], 1)
+        attn_out_lse_list = []
+        # Concat out&lse: [bs,num_heads,v_head_dim] + [bs,num_heads,1] -> [bs,num_heads,v_head_dim+1]
+        attn_out_lse = torch.cat([attn_out, attn_lse], dim=-1)
         if self.dcp_size > 1:
-            # Concat out&lse: [bs,num_heads,v_head_dim] + [bs,num_heads,1] -> [bs,num_heads,v_head_dim+1]
-            attn_out_lse = torch.cat([attn_out, attn_lse], dim=-1)
             # permute: [bs, num_heads, v_head_dim+1] -> [num_heads, v_head_dim+1, bs]
             attn_out_lse = attn_out_lse.permute([1, 2, 0]).contiguous()
             attn_out_lse_all2all = torch.empty_like(attn_out_lse)
@@ -903,35 +904,28 @@ class AscendAttentionBackendImpl(AttentionImpl):
                                    group=self.dcp_group)
             # permute: [num_heads, v_head_dim+1, bs] -> [bs, num_heads, v_head_dim+1]
             attn_out_lse_all2all = attn_out_lse_all2all.permute([2, 0, 1])
-            attn_out_lse_split_on_seq = list(
+            if self.pcp_size > 1:
+                attn_out_lse = attn_out_lse_all2all.contiguous()
+            attn_out_lse_list = list(
                 torch.chunk(attn_out_lse_all2all, self.dcp_size, dim=1))
 
-            attn_out_lse_split_dcp = torch.stack(
-                attn_out_lse_split_on_seq,
-                dim=0)  # [dcp, batch_size, num_heads, head_size+1]
-            # Update out&lse
-            attn_out_split_dcp, attn_lse_split_dcp = torch.split(
-                attn_out_lse_split_dcp, [self.head_size, 1], dim=-1)
-            attn_out, attn_lse = self._update_out_and_lse(
-                attn_out_split_dcp, attn_lse_split_dcp)
         if self.pcp_size > 1:
-            # 2. Concat out&lse: [bs,num_heads,head_size] + [bs,num_heads,1] -> [bs,num_heads,head_size+1]
-            attn_out_lse = torch.cat([attn_out, attn_lse], dim=-1)
-            # 3. AllGather out&lse within CP group
+            # AllGather out&lse within CP group
             attn_out_lse_list = [
                 torch.empty_like(attn_out_lse) for _ in range(self.pcp_size)
             ]
             dist.all_gather(attn_out_lse_list,
                             attn_out_lse,
                             group=self.pcp_group)
-            # 4. Update out&lse
-            attn_out_lse_allgather = torch.stack(
-                attn_out_lse_list,
-                dim=0)  # [pcp, batch_size, num_heads, head_size+1]
-            attn_out_allgather, attn_lse_allgather = torch.split(
-                attn_out_lse_allgather, [self.head_size, 1], dim=-1)
-            attn_out, _ = self._update_out_and_lse(attn_out_allgather,
-                                                   attn_lse_allgather)
+        if self.dcp_size > 1 and self.pcp_size > 1:
+            attn_out_lse_list_pcp_dcp = []
+            for s in attn_out_lse_list:
+                attn_out_lse_list_split = list(
+                    torch.chunk(s, self.dcp_size, dim=1))
+                attn_out_lse_list_pcp_dcp += attn_out_lse_list_split
+            attn_out_lse_list = attn_out_lse_list_pcp_dcp
+        # Update out&lse
+        attn_out = self._npu_attention_update(attn_out_lse_list)
         return attn_out
 
     def _forward_pcp_dcp(self, query: torch.Tensor, key: torch.Tensor,
