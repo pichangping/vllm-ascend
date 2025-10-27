@@ -318,6 +318,15 @@ class AscendAttentionMetadataBuilder:
             pcp_metadata = None
             common_long_seq_metadata = common_attn_metadata.prefill_context_parallel_metadata
             if common_long_seq_metadata is not None:
+                attn_mask_seqlens = torch.cumsum(
+                    common_long_seq_metadata.attn_mask_seqlens[0],
+                    dim=0).tolist()
+                head_attn_nomask_seqlens = torch.cumsum(
+                    common_long_seq_metadata.head_attn_nomask_seqlens[1],
+                    dim=0).tolist()
+                tail_attn_nomask_seqlens = torch.cumsum(
+                    common_long_seq_metadata.tail_attn_nomask_seqlens[1],
+                    dim=0).tolist()
                 pcp_metadata = AscendPCPMetadata(
                     q_head_idx=common_long_seq_metadata.q_head_idx_tensor,
                     q_tail_idx=common_long_seq_metadata.q_tail_idx_tensor,
