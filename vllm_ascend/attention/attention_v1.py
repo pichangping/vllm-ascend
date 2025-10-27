@@ -1168,3 +1168,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         output[:num_tokens] = intermediate_output[:num_tokens]
 
         return output
+                else:
+                    pcp_prefill_mask = torch.triu(
+                        torch.full((2048, 2048),
+                                   True,
+                                   device=self.device,
+                                   dtype=torch.bool), 1)
