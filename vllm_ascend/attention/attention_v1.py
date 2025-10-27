@@ -338,12 +338,9 @@ class AscendAttentionMetadataBuilder:
                     kv_with_q_tail_nomask_idx_tensor,
                     kv_with_q_tail_mask_idx=common_long_seq_metadata.
                     kv_with_q_tail_mask_idx_tensor,
-                    attn_mask_seqlens=common_long_seq_metadata.
-                    attn_mask_seqlens,
-                    head_attn_nomask_seqlens=common_long_seq_metadata.
-                    head_attn_nomask_seqlens,
-                    tail_attn_nomask_seqlens=common_long_seq_metadata.
-                    tail_attn_nomask_seqlens,
+                    attn_mask_seqlens=attn_mask_seqlens,
+                    head_attn_nomask_seqlens=head_attn_nomask_seqlens,
+                    tail_attn_nomask_seqlens=tail_attn_nomask_seqlens,
                     q_full_idx=common_long_seq_metadata.q_full_idx,
                     pcp_prefill_mask=common_long_seq_metadata.pcp_prefill_mask)
             prefill_metadata = AscendMetadataForPrefill(
