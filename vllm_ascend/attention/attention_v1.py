@@ -942,8 +942,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 (query, k_nope, value, self.num_heads, self.num_kv_heads,
                  self.scale, attn_metadata.block_tables,
                  self.key_cache.shape[1], attn_metadata.decode.
-                 num_computed_tokens_of_cp_dcp[:, self.cp_rank, self.dcp_rank],
-                 workspace, attn_out, attn_lse, self.cp_rank, self.dcp_rank,
+                 num_computed_tokens_of_pcp_dcp[:, self.pcp_rank, self.dcp_rank],
+                 workspace, attn_out, attn_lse, self.pcp_rank, self.dcp_rank,
                  self.dcp_size))
             torch.npu.graph_task_group_begin(stream)
             torch_npu.npu_fused_infer_attention_score.out(
