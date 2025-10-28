@@ -818,15 +818,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # 1. Attention calculation in the first half of Q in load balancing
         output_head = self._attention_with_nomask_and_mask(
             q=torch.index_select(query, 0, q_head_idx),
-            q_seqlens=attn_mask_seqlens[0].tolist(),
+            q_seqlens=attn_mask_seqlens,
             k_nomask=torch.index_select(key, 0, kv_with_q_head_nomask_idx)
             if self.pcp_rank > 0 else None,
             v_nomask=torch.index_select(value, 0, kv_with_q_head_nomask_idx)
             if self.pcp_rank > 0 else None,
-            kv_seqlens_nomask=head_attn_nomask_seqlens[1].tolist(),
+            kv_seqlens_nomask=head_attn_nomask_seqlens,
             k_mask=torch.index_select(key, 0, kv_with_q_head_mask_idx),
             v_mask=torch.index_select(value, 0, kv_with_q_head_mask_idx),
-            kv_seqlens_mask=attn_mask_seqlens[0].tolist(),
+            kv_seqlens_mask=attn_mask_seqlens,
             mask=mask)
 
         # 2. the Attention calculation in the latter half of Q in load balancing
@@ -834,13 +834,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # pcp_rank1: Q2*KV0~KV1 + Q2*KV2
         output_tail = self._attention_with_nomask_and_mask(
             q=torch.index_select(query, 0, q_tail_idx),
-            q_seqlens=attn_mask_seqlens[0].tolist(),
+            q_seqlens=attn_mask_seqlens,
             k_nomask=torch.index_select(key, 0, kv_with_q_tail_nomask_idx),
             v_nomask=torch.index_select(value, 0, kv_with_q_tail_nomask_idx),
-            kv_seqlens_nomask=tail_attn_nomask_seqlens[1].tolist(),
+            kv_seqlens_nomask=tail_attn_nomask_seqlens,
             k_mask=torch.index_select(key, 0, kv_with_q_tail_mask_idx),
             v_mask=torch.index_select(value, 0, kv_with_q_tail_mask_idx),
-            kv_seqlens_mask=attn_mask_seqlens[0].tolist(),
+            kv_seqlens_mask=attn_mask_seqlens,
             mask=mask)
 
         # 3. Combine the output of the first half and second half.
