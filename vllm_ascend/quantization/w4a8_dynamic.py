@@ -489,3 +489,12 @@ class AscendW4A8DynamicFusedMoEMethod:
                 layer.w2_weight.data, ACL_FORMAT_FRACTAL_NZ)
         layer.w13_weight.data = self.pack_to_int32(layer.w13_weight.data)
         layer.w2_weight.data = self.pack_to_int32(layer.w2_weight.data)
+
+    split_q_head_nomask_idx_tensor_list: Optional[list[torch.Tensor]] = None
+    
+    split_q_tail_nomask_idx_tensor_list: Optional[list[torch.Tensor]] = None
+    
+    head_attn_nomask_seqlens_list: Optional[list[torch.Tensor]] = None
+    
+    tail_attn_nomask_seqlens_list: Optional[list[torch.Tensor]] = None 
+
