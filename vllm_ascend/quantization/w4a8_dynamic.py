@@ -515,3 +515,19 @@ mla_v1
                     tail_attn_nomask_seqlens_list=common_long_seq_metadata.
                     tail_attn_nomask_seqlens_list,
                 )
+
+
+        split_q_head_nomask_idx_tensor_list = attn_metadata.prefill.pcp_metadata.split_q_head_nomask_idx_tensor_list
+        split_q_tail_nomask_idx_tensor_list = attn_metadata.prefill.pcp_metadata.split_q_tail_nomask_idx_tensor_list
+        head_attn_nomask_seqlens_list = attn_metadata.prefill.pcp_metadata.head_attn_nomask_seqlens_list
+        tail_attn_nomask_seqlens_list = attn_metadata.prefill.pcp_metadata.tail_attn_nomask_seqlens_list
+
+            split_nomask_idx_tensor_list=split_q_head_nomask_idx_tensor_list,
+            attn_nomask_seqlens_list=head_attn_nomask_seqlens_list,
+        )
+
+
+            split_nomask_idx_tensor_list=split_q_tail_nomask_idx_tensor_list,
+            attn_nomask_seqlens_list=tail_attn_nomask_seqlens_list
+        )
+
