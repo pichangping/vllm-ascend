@@ -399,7 +399,42 @@ def scale_from_float_to_int64(scale):
 
 
 
+    def _split_multi_batch_kv_idx(
+        self,
+        kv_nomask_idx_multi_batch,
+        split_size,
+    ):
+        batch_lengths = [len(batch) for batch in kv_nomask_idx_multi_batch]
+        max_batch_length = max(batch_lengths) if batch_lengths else 0
+        time = (max_batch_length + split_size - 1) // split_size
+        split_kv_idx_3d = []
+        split_kv_len_2d = []
+        merged_split_kv_idx_3d = []
 
+        for single_batch in kv_nomask_idx_multi_batch:
+            current_batch_split = []
+            current_batch_len = []
+            for t in range(time):
+                start = t * split_size
+                current_segment = single_batch[start:start + split_size]
+                current_batch_split.append(current_segment)
+                current_batch_len.append(len(current_segment))
+
+            split_kv_idx_3d.append(current_batch_split)
+            split_kv_len_2d.append(current_batch_len)
+
+        for time_idx in range(time):
+            current_time_merged = []
+            for batch in split_kv_idx_3d:
+                current_time_merged.extend(batch[time_idx])
+            merged_split_kv_idx_3d.append(current_time_merged)
+
+        def reshape_kv_len_to_time_first(split_kv_len_2d):
+            return [[batch_len[time_idx] for batch_len in split_kv_len_2d]
+                    for time_idx in range(len(split_kv_len_2d[0]))]
+
+        merged_split_kv_idx_2d = reshape_kv_len_to_time_first(split_kv_len_2d)
+        return merged_split_kv_idx_3d, merged_split_kv_idx_2d
 
 
 
