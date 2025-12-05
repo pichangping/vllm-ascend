@@ -557,3 +557,131 @@ mla_v1
                                     calc_type="calc_type_default",
                                     output=attn_output,
                                     softmax_lse=attn_lse)
+
+
+                split_with_q_head_nomask_idx_reqs = []
+                split_kv_with_q_tail_nomask_idx_reqs = []
+                q_req_offset = 0
+                kv_req_offset = 0
+                q_head_chunk_id = self.pcp_rank
+                q_tail_chunk_id = self.pcp_size * 2 - 1 - self.pcp_rank
+                for i, seq_len in enumerate(self.query_lens):
+                    if i < num_decodes:
+                        continue
+                    chunk_len = seq_len // 2
+                    chunk_seqlens.append(chunk_len)
+                    q_head_idx.extend(
+                        list(range(q_req_offset, q_req_offset + chunk_len)))
+                    kv_with_q_head_nomask_idx.extend(
+                        list(
+                            range(kv_req_offset, kv_req_offset +
+                                  chunk_len * q_head_chunk_id)))
+                    kv_with_q_head_mask_idx.extend(
+                        list(
+                            range(
+                                kv_req_offset + chunk_len * q_head_chunk_id,
+                                kv_req_offset + chunk_len *
+                                (q_head_chunk_id + 1))))
+                    kv_with_q_head_nomask_seqlens.append(chunk_len *
+                                                         q_head_chunk_id)
+                    split_with_q_head_nomask_idx_reqs.append(list(
+                            range(kv_req_offset, kv_req_offset +
+                                  chunk_len * q_head_chunk_id)))
+                    q_tail_idx.extend(
+                        list(
+                            range(q_req_offset + chunk_len,
+                                  q_req_offset + chunk_len * 2)))
+                    kv_with_q_tail_nomask_idx.extend(
+                        list(
+                            range(kv_req_offset, kv_req_offset +
+                                  chunk_len * q_tail_chunk_id)))
+                    kv_with_q_tail_mask_idx.extend(
+                        list(
+                            range(
+                                kv_req_offset + chunk_len * q_tail_chunk_id,
+                                kv_req_offset + chunk_len *
+                                (q_tail_chunk_id + 1))))
+                    kv_with_q_tail_nomask_seqlens.append(chunk_len *
+                                                         q_tail_chunk_id)
+                    split_kv_with_q_tail_nomask_idx_reqs.append(list(
+                            range(kv_req_offset, kv_req_offset +
+                                  chunk_len * q_tail_chunk_id)))
+                    q_req_offset += seq_len
+                    kv_req_offset += seq_len * self.pcp_size
+
+                # Convert lists to tensors and move to device
+                def _list_to_tensor(lst, device, dtype=torch.int32):
+                    tensor_npu = torch.zeros(len(lst),
+                                             dtype=dtype,
+                                             device=device)
+                    tensor_npu.copy_(torch.tensor(lst, dtype=dtype),
+                                     non_blocking=True)
+                    return tensor_npu
+
+                q_head_idx_tensor = _list_to_tensor(q_head_idx, self.device)
+                q_tail_idx_tensor = _list_to_tensor(q_tail_idx, self.device)
+                self.q_head_idx_tensor = q_head_idx_tensor
+                self.q_tail_idx_tensor = q_tail_idx_tensor
+
+                q_full_idx = torch.cat([q_head_idx_tensor, q_tail_idx_tensor])
+                q_full_idx = q_full_idx.to(torch.float32).argsort().to(
+                    torch.int32)
+                self.q_full_idx = q_full_idx
+
+                self.kv_idx_names = {
+                    'kv_with_q_head_nomask_idx_tensor':
+                    kv_with_q_head_nomask_idx,
+                    'kv_with_q_head_mask_idx_tensor': kv_with_q_head_mask_idx,
+                    'kv_with_q_tail_nomask_idx_tensor':
+                    kv_with_q_tail_nomask_idx,
+                    'kv_with_q_tail_mask_idx_tensor': kv_with_q_tail_mask_idx
+                }
+                for key, value in self.kv_idx_names.items():
+                    tensor_npu = _list_to_tensor(value, self.device)
+                    self.kv_idx_names[key] = tensor_npu
+
+                attn_mask_seqlens = torch.tensor(
+                    [chunk_seqlens, chunk_seqlens], dtype=torch.int32)
+
+                head_attn_nomask_seqlens = torch.tensor(
+                    [chunk_seqlens, kv_with_q_head_nomask_seqlens],
+                    dtype=torch.int32)
+                tail_attn_nomask_seqlens = torch.tensor(
+                    [chunk_seqlens, kv_with_q_tail_nomask_seqlens],
+                    dtype=torch.int32)
+
+                split_q_head_nomask_idx_tensor_list, split_q_tail_nomask_idx_tensor_list= [], []
+                head_attn_nomask_seqlens_list, tail_attn_nomask_seqlens_list = [], []
+                # print(f"pcp_rank:{self.pcp_rank}, dcp_rank:{self.dcp_rank}, split_with_q_head_nomask_idx_reqs: {split_with_q_head_nomask_idx_reqs}")
+                if split_with_q_head_nomask_idx_reqs:
+                    split_size = 8 * 1024
+                    if self.pcp_rank == 0:
+                        split_q_head_nomask_idx_list = [self.kv_idx_names['kv_with_q_head_nomask_idx_tensor']]
+                    else:
+                        # print(f"pcp_rank:{self.pcp_rank}, dcp_rank:{self.dcp_rank}, split_q_head_nomask_lens_list: {split_q_head_nomask_lens_list}")
+                        split_q_head_nomask_idx_list, split_q_head_nomask_lens_list = self._split_multi_batch_kv_idx(split_with_q_head_nomask_idx_reqs, split_size)
+                    split_q_tail_nomask_idx_list, split_q_tail_nomask_lens_list = self._split_multi_batch_kv_idx(split_kv_with_q_tail_nomask_idx_reqs, split_size)
+                    # split_q_head_nomask_idx_tensor_list, split_q_tail_nomask_idx_tensor_list= [], []
+                    for q_head_nomask_idx in split_q_head_nomask_idx_list:
+                        split_q_head_nomask_idx_tensor_list.append(_list_to_tensor(q_head_nomask_idx, self.device))
+                        
+                    for q_tail_nomask_idx in split_q_tail_nomask_idx_list:
+                        split_q_tail_nomask_idx_tensor_list.append(_list_to_tensor(q_tail_nomask_idx, self.device)) 
+
+                    # head_attn_nomask_seqlens_list, tail_attn_nomask_seqlens_list = [], []
+                    if self.pcp_rank == 0:
+                        head_attn_nomask_seqlens_list = [head_attn_nomask_seqlens]
+                    else:
+                        for q_head_nomask_lens in split_q_head_nomask_lens_list:
+                                head_attn_nomask_seqlens_list.append(
+                                    torch.tensor(
+                                        [chunk_seqlens, q_head_nomask_lens],
+                                        dtype=torch.int32)
+                                )
+                    for q_tail_nomask_lens in split_q_tail_nomask_lens_list:
+                        tail_attn_nomask_seqlens_list.append(
+                            torch.tensor(
+                                [chunk_seqlens, q_tail_nomask_lens],
+                                dtype=torch.int32)
+                        )
+
