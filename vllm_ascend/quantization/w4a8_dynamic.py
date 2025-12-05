@@ -531,3 +531,29 @@ mla_v1
             attn_nomask_seqlens_list=tail_attn_nomask_seqlens_list
         )
 
+            split_nomask_idx_tensor_list,
+            attn_nomask_seqlens_list,
+        ):
+
+        for kv_nomask_idx, attn_nomask_seqlens in zip(split_nomask_idx_tensor_list, attn_nomask_seqlens_list):
+            k_nope_nomask = torch.index_select(k_nope, 0, kv_nomask_idx)
+            value_nomask = torch.index_select(value, 0, kv_nomask_idx)
+            k_pe_nomask = torch.index_select(k_pe, 0, kv_nomask_idx)
+            torch_npu.atb.npu_ring_mla(q_nope=q_nope,
+                                    q_rope=q_pe,
+                                    k_nope=k_nope_nomask,
+                                    k_rope=k_pe_nomask,
+                                    value=value_nomask,
+                                    mask=mask,
+                                    seqlen=attn_nomask_seqlens,
+                                    head_num=self.num_heads,
+                                    kv_head_num=self.num_heads,
+                                    pre_out=attn_output,
+                                    prev_lse=attn_lse,
+                                    qk_scale=self.scale,
+                                    kernel_type="kernel_type_high_precision",
+                                    mask_type="no_mask",
+                                    input_layout="type_bsnd",
+                                    calc_type="calc_type_default",
+                                    output=attn_output,
+                                    softmax_lse=attn_lse)
