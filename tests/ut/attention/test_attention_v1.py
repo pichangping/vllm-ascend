@@ -390,6 +390,7 @@ class TestAscendAttentionBackendImpl(TestBase):
             self.impl_error.forward(layer, query, key, value, kv_cache,
                                     metadata, output)
 
+
 class TestUpdateNpuAttnOutLse(TestBase):
 
     @patch('vllm.distributed.parallel_state.get_pcp_group')
