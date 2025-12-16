@@ -1,13 +1,17 @@
+from typing import List
 from unittest.mock import MagicMock, patch
 
 import torch
 from vllm.distributed.parallel_state import GroupCoordinator
 
 from tests.ut.base import TestBase
+from vllm_ascend.attention.attention_cp import AscendAttentionCPImpl
 from vllm_ascend.attention.attention_v1 import (AscendAttentionBackend,
                                                 AscendAttentionBackendImpl,
                                                 AscendAttentionMetadataBuilder,
-                                                AscendAttentionState)
+                                                AscendAttentionState,
+                                                AscendMetadata,
+                                                AscendMetadataForPrefill)
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 from vllm_ascend.utils import AscendDeviceType
 
