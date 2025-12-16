@@ -56,7 +56,7 @@ def mtp_correctness(sampling_config: SamplingParams,
                     enable_expert_parallel=True,
                     speculative_config={
                         "method":
-                        "deepseek_mtp",
+                        "mtp",
                         "num_speculative_tokens":
                         num_speculative_tokens,
                         "disable_padded_drafter_batch":
@@ -102,7 +102,6 @@ def test_mtp2_correctness_eager(
     mtp_correctness(sampling_config, model_name, 2, enforce_eager=True)
 
 
-@pytest.mark.skip("TODO(cmq): Revert me when mtp aclgraph is fixed")
 def test_mtp1_correctness_piecewise_graph(
     sampling_config: SamplingParams,
     model_name: str,
@@ -110,7 +109,6 @@ def test_mtp1_correctness_piecewise_graph(
     mtp_correctness(sampling_config, model_name, 1)
 
 
-@pytest.mark.skip("TODO(cmq): Revert me when mtp aclgraph is fixed")
 def test_mtp2_correctness_piecewise_graph(
     sampling_config: SamplingParams,
     model_name: str,
