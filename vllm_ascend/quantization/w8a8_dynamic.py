@@ -14,6 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+    def _list_to_tensor(self, lst, device, dtype=torch.int32):
+        tensor_npu = torch.zeros(len(lst), dtype=dtype, device=device)
+        tensor_npu.copy_(torch.tensor(lst, dtype=dtype),
+                            non_blocking=True)
+        return tensor_npu
 
     def _split_nomask_idx_tensor_list(self, split_with_q_head_nomask_idx_reqs,
                                       split_kv_with_q_tail_nomask_idx_reqs,
