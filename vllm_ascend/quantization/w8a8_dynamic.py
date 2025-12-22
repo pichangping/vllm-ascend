@@ -15,6 +15,10 @@
 # limitations under the License.
 #
 
+    def _split_nomask_idx_tensor_list(self, split_with_q_head_nomask_idx_reqs,
+                                      split_kv_with_q_tail_nomask_idx_reqs,
+                                      head_attn_nomask_seqlens, chunk_seqlens):
+
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import torch
