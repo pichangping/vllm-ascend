@@ -14,6 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+        # case: empty input
+        (
+            [],
+            2,
+            [],
+            [],
+        ),
+
+            if not split_kv_len_2d or not split_kv_len_2d[0]:
+                return []
+
                 q_head_idx_tensor = self._list_to_tensor(
                     q_head_idx, self.device)
                 q_tail_idx_tensor = self._list_to_tensor(
