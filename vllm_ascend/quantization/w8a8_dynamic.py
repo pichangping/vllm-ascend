@@ -14,15 +14,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+                if self.vllm_config.model_config.use_mla:
+                    long_seq_metadata.kv_with_q_head_nomask_idx_tensor = split_q_head_nomask_idx_tensor_list
+                    long_seq_metadata.kv_with_q_tail_nomask_idx_tensor = split_q_tail_nomask_idx_tensor_list
+                    long_seq_metadata.head_attn_nomask_seqlens = head_attn_nomask_seqlens_list
+                    long_seq_metadata.tail_attn_nomask_seqlens = tail_attn_nomask_seqlens_list
+
     def _list_to_tensor(self, lst, device, dtype=torch.int32):
         tensor_npu = torch.zeros(len(lst), dtype=dtype, device=device)
         tensor_npu.copy_(torch.tensor(lst, dtype=dtype),
                             non_blocking=True)
         return tensor_npu
 
-    def _split_nomask_idx_tensor_list(self, split_with_q_head_nomask_idx_reqs,
-                                      split_kv_with_q_tail_nomask_idx_reqs,
-                                      head_attn_nomask_seqlens, chunk_seqlens):
+    mock_runner._get_cp_local_seq_lens.side_effect = NPUModelRunner._get_cp_local_seq_lens.__get__(
+        mock_runner, NPUModelRunner)
+    mock_runner._list_to_tensor.side_effect = NPUModelRunner._list_to_tensor.__get__(
+        mock_runner, NPUModelRunner)
+    mock_runner._split_nomask_idx_tensor_list.side_effect = NPUModelRunner._split_nomask_idx_tensor_list.__get__(
+        mock_runner, NPUModelRunner)
+    mock_runner._split_multi_batch_kv_idx.side_effect = NPUModelRunner._split_multi_batch_kv_idx.__get__(
+        mock_runner, NPUModelRunner)
+
+    result = NPUModelRunner._generate_pcp_metadata(mock_runner, total_tokens)
+
+        if len(kv_nomask_idx[0]) == 0:
+            return attn_output, attn_lse
+        for kv_nomask_idx_split, attn_nomask_seqlens_split in zip(
+                kv_nomask_idx, attn_nomask_seqlens):
+            k_nope_nomask = torch.index_select(k_nope, 0, kv_nomask_idx_split)
+            value_nomask = torch.index_select(value, 0, kv_nomask_idx_split)
+            k_pe_nomask = torch.index_select(k_pe, 0, kv_nomask_idx_split)
+            torch_npu.atb.npu_ring_mla(
+                q_nope=q_nope,
+                q_rope=q_pe,
+                k_nope=k_nope_nomask,
+                k_rope=k_pe_nomask,
+                value=value_nomask,
+                mask=mask,
+                seqlen=attn_nomask_seqlens_split,
+                head_num=self.num_heads,
+                kv_head_num=self.num_heads,
+                pre_out=attn_output,
+                prev_lse=attn_lse,
+                qk_scale=self.scale,
+                kernel_type="kernel_type_high_precision",
+                mask_type="no_mask",
+                input_layout="type_bsnd",
+                calc_type="calc_type_default",
+                output=attn_output,
+                softmax_lse=attn_lse)
+        return attn_output, attn_lse
 
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
