@@ -26,6 +26,7 @@ from vllm.model_executor.layers.linear import (LinearBase,
                                                UnquantizedLinearMethod)
 from vllm.utils import cdiv, round_down
 from vllm.v1.attention.backends.utils import AttentionCGSupport
+from torch import nn
 
 from vllm_ascend import envs
 from vllm_ascend.ascend_config import get_ascend_config
