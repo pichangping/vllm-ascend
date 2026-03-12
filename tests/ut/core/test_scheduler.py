@@ -1480,3 +1480,551 @@ class TestSchedulerDynamicBatch(TestBase):
 
         # Confirm no memory leak.
         self.assert_scheduler_empty(scheduler)
+
+
+
+from vllm_ascend.quantization.methods.w8a8_static import AscendW8A8LinearMethod
+
+    dequant_scale_q_nope: torch.Tensor | None = None
+
+        self.is_kv_producer = (
+            self.vllm_config.kv_transfer_config is not None and self.vllm_config.kv_transfer_config.is_kv_producer
+        )
+        self.layer_name = kwargs.get("layer_name")
+        self.fa_quant_layer = enabling_fa_quant(self.vllm_config, self.layer_name)
+        self.dtype = torch.int8 if self.fa_quant_layer else self.vllm_config.model_config.dtype
+
+        elif self.fa_quant_layer:
+            self._process_weights_for_fused_fa_quant()
+
+    def _process_weights_for_fused_fa_quant(self):
+        self.gamma1 = self.q_a_layernorm.weight.data  # type: ignore[union-attr]
+        self.gamma2 = self.kv_a_layernorm.weight.data  # type: ignore[union-attr]
+
+        wu_q = self.q_proj.weight.data
+
+        self.wu_q = wu_q
+
+        q_a_proj_fa3 = self.fused_qkv_a_proj.weight.data[..., : self.q_lora_rank].contiguous()  # type: ignore[union-attr]
+
+        self.wd_q = q_a_proj_fa3
+
+        kv_a_proj_fa3 = self.fused_qkv_a_proj.weight.data[..., self.q_lora_rank :].contiguous()  # type: ignore[union-attr]
+
+        self.wd_kv = kv_a_proj_fa3
+
+        self.dequant_scale_w_uq_qr = self.q_proj.weight_scale.data.view(1, -1).to(torch.float)
+        q_a_proj_deq_scl = self.fused_qkv_a_proj.weight_scale[: self.q_lora_rank].contiguous()  # type: ignore[union-attr]
+        self.dequant_scale_w_dq = q_a_proj_deq_scl.view(1, -1).to(torch.float)
+        kv_a_proj_deq_scl = self.fused_qkv_a_proj.weight_scale[self.q_lora_rank :].contiguous()  # type: ignore[union-attr]
+        self.dequant_scale_w_dkv_kr = kv_a_proj_deq_scl.view(1, -1).to(torch.float)
+
+        layer = self.vllm_config.compilation_config.static_forward_context[self.layer_name]
+        self.quant_kscale = layer.quant_kscale
+        self.fak_descale_float = layer.fak_descale_float
+
+        dequant_scale_q_nope=None,
+
+
+        if self.fa_quant_layer:
+            nz_fmt_last_dim = 16
+            k_nope = k_nope.view(
+                -1, self.num_kv_heads, self.kv_lora_rank // (nz_fmt_last_dim * 2), block_size, nz_fmt_last_dim * 2
+            )
+            k_pe = k_pe.view(
+                -1, self.num_kv_heads, self.qk_rope_head_dim // nz_fmt_last_dim, block_size, nz_fmt_last_dim
+            )
+        elif self.enable_kv_nz:
+
+
+
+
+
+        elif self.fa_quant_layer:
+            attn_mask = None
+            input_layout = "BSND_NBSD"
+            q_nope = q_nope.view(num_tokens, 1, self.num_heads, -1).contiguous()
+            q_pe = q_pe.view(num_tokens, 1, self.num_heads, -1).contiguous()
+            dequant_scale_q_nope = dequant_scale_q_nope.view(num_tokens, 1, self.num_heads)
+            sparse_mode = 0
+            actual_seq_lengths = None
+            common_kwargs_v2 = {
+                "query_rope": q_pe,
+                "key_rope": k_pe,
+                "num_query_heads": self.num_heads,
+                "num_key_value_heads": self.num_kv_heads,
+                "input_layout": input_layout,
+                "atten_mask": attn_mask,
+                "sparse_mode": sparse_mode,
+                "softmax_scale": self.scale,
+                "query_quant_mode": 3,
+                "key_quant_mode": 0,
+                "value_quant_mode": 0,
+                "dequant_scale_query": dequant_scale_q_nope,
+                "dequant_scale_key": self.fak_descale_float,
+                "dequant_scale_value": self.fak_descale_float,
+                "block_table": decode_meta.block_table,
+                "block_size": block_size,
+                "actual_seq_qlen": actual_seq_lengths,
+                "actual_seq_kvlen": decode_meta.seq_lens_list,
+            }
+
+
+        elif self.fa_quant_layer:
+            attn_output, _ = torch_npu.npu_fused_infer_attention_score_v2(q_nope, k_nope, k_nope, **common_kwargs_v2)
+
+        dequant_scale_q_nope = None
+        if self.fa_quant_layer:
+            quantized_x, pertoken_scale = torch_npu.npu_dynamic_quant(hidden_states)
+            decode_q_nope, decode_q_pe, decode_k_nope, decode_k_pe, dequant_scale_q_nope = torch_npu.npu_mla_prolog_v2(
+                quantized_x,
+                self.wd_q,
+                self.wu_q,
+                self.W_UK_T,
+                self.wd_kv,
+                self.gamma1,
+                self.gamma2,
+                sin,
+                cos,
+                attn_metadata.slot_mapping[:bsz].to(torch.int64),
+                decode_k_nope,
+                decode_k_pe,
+                dequant_scale_x=pertoken_scale.view(-1, 1),
+                dequant_scale_w_dq=self.dequant_scale_w_dq,
+                dequant_scale_w_uq_qr=self.dequant_scale_w_uq_qr,
+                dequant_scale_w_dkv_kr=self.dequant_scale_w_dkv_kr,
+                quant_scale_ckv=self.quant_kscale,
+                cache_mode="PA_NZ",
+            )
+        else:
+            decode_q_nope = torch.empty(
+                (hidden_states.shape[0], self.W_UK_T.shape[0], decode_k_nope.shape[-1]),
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+            )
+            decode_q_pe = torch.empty(
+                (hidden_states.shape[0], self.W_UK_T.shape[0], decode_k_pe.shape[-1]),
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+            )
+
+            torch.ops._C_ascend.mla_preprocess(
+                hidden_states,
+                self.wd_qkv,
+                self.deq_scale_qkv,
+                self.gamma1,
+                self.beta1,
+                self.wu_q,
+                self.qb_deq_scl,
+                self.gamma2,
+                cos,
+                sin,
+                self.W_UK_T,
+                decode_k_nope,
+                decode_k_pe,
+                attn_metadata.slot_mapping[:bsz],
+                quant_scale0=self.quant_scale0,
+                quant_offset0=self.quant_offset0,
+                bias0=self.quant_bias_qkv,
+                quant_scale1=self.quant_scale1,
+                quant_offset1=self.quant_offset1,
+                bias1=self.qb_qt_bias,
+                ctkv_scale=self.ctkv_scale,
+                q_nope_scale=self.q_nope_scale,
+                cache_mode="nzcache" if self.enable_kv_nz else "krope_ctkv",
+                quant_mode="per_tensor_quant_asymm",
+                q_out0=decode_q_nope,
+                kv_cache_out0=decode_k_nope,
+                q_out1=decode_q_pe,
+                kv_cache_out1=decode_k_pe,
+                enable_inner_out=False,
+                inner_out=torch.tensor([], device=hidden_states.device),
+            )
+            decode_q_nope = decode_q_nope.view(bsz, self.num_heads, self.kv_lora_rank)
+            decode_q_pe = decode_q_pe.view(bsz, self.num_heads, -1)
+
+        decode_q_nope, decode_q_pe = self.reorg_decode_q(decode_q_nope, decode_q_pe)
+
+        decode_preprocess_res = DecodeMLAPreprocessResult(
+            decode_q_nope, decode_q_pe, decode_k_nope, decode_k_pe, dequant_scale_q_nope=dequant_scale_q_nope
+        )
+
+
+
+        if self.fa_quant_layer or (self.enable_mlapo and attn_metadata.num_decode_tokens <= MLAPO_MAX_SUPPORTED_TOKENS):
+
+
+                decode_preprocess_res.dequant_scale_q_nope,
+
+
+layer_wise
+
+@dataclass
+class SendTask:
+    send_request: dict[str, ReqMeta] = field(default_factory=dict)
+    # pd_head_ratio == 1 use
+    wait_event: torch.npu.Event | None = None
+    # pd_head_ratio > 1 use
+    k_cache: torch.Tensor | None = None
+    v_cache: torch.Tensor | None = None
+    # kv cache quantization layer use
+    k_quant_cache: torch.Tensor | None = None
+    v_quant_cache: torch.Tensor | None = None
+    layer_idx: int = 0
+    layer_name: str = ""
+    # trans block info
+    group_rearrange_block_ids: list[list[int]] | None = None
+    group_num_blocks: list[int] | None = None
+    group_num_tokens: list[int] | None = None
+    group_block_table: list[torch.Tensor | None] | None = None
+    group_block_len_tensor: list[torch.Tensor | None] | None = None
+    group_seq_start_tensor: list[torch.Tensor | None] | None = None
+
+
+
+class KVCacheSendingLayerThread(threading.Thread):
+    def __init__(
+        self,
+        engine: TransferEngine,
+        vllm_config: VllmConfig,
+        kv_cache_config: KVCacheConfig,
+        kv_cache_specs: list[KVCacheSpec],
+        attn_resharding_group_idx: set,
+        total_layers: int,
+        ready_event: threading.Event,
+        tp_size: int,
+        tp_rank: int,
+        pd_head_ratio: int,
+        num_head_replica: int,
+        layer_metadata: dict[str, LayerMetadata],
+        use_mla: bool,
+        k_buffer: torch.Tensor,
+        v_buffer: torch.Tensor,
+        enable_kv_quant: bool,
+        k_quant_buffer: torch.Tensor | None,
+        v_quant_buffer: torch.Tensor | None,
+        resharding_stream: torch.npu.Stream,
+        callback_func: Callable[..., None] = lambda x: None,
+    ):
+        super().__init__(daemon=True, name="KVCacheSendingLayerThread")
+        self.engine = engine
+        self.vllm_config = vllm_config
+        self.kv_cache_config = kv_cache_config
+        self.kv_cache_specs = kv_cache_specs
+        self.attn_resharding_group_idx = attn_resharding_group_idx
+        self.tp_size = tp_size
+        self.tp_rank = tp_rank
+        self.pd_head_ratio = pd_head_ratio
+        self.num_head_replica = num_head_replica
+        self.layer_metadata = layer_metadata
+        self.total_layers = total_layers
+        self.use_mla = use_mla
+        self.resharding_stream = resharding_stream
+        self.current_layer = -1
+
+        self.send_queue = queue.Queue[SendTask]()
+        self.k_buffer = k_buffer
+        self.v_buffer = v_buffer
+        self.enable_kv_quant = enable_kv_quant
+        self.k_quant_buffer = k_quant_buffer
+        self.v_quant_buffer = v_quant_buffer
+        self.ready_event = ready_event
+        self.callback_func = callback_func
+
+
+
+if self.pd_head_ratio == 1:
+                layer_local_kv_base_addr = local_layer_metadata.kv_caches_base_addr
+                layer_remote_kv_base_addr = remote_layer_metadata.kv_caches_base_addr
+                block_lens = local_layer_metadata.block_len
+                grouped_remote_block_ids, grouped_local_block_ids = group_concurrent_contiguous(
+                    remote_block_ids, local_block_ids
+                )
+                # kv cache quantization scenario
+                if self.enable_kv_quant and send_task.k_quant_cache is not None:
+                    assert len(block_lens) == 2, "Quantization block length must be 2!"
+                    quant_block_lens = [block_lens[0] // 2, block_lens[1]]
+                    layer_local_quant_kv_addr = [self.k_quant_buffer.data_ptr(), self.v_quant_buffer.data_ptr()]
+                    rearrange_block_ids = send_task.group_rearrange_block_ids[layer_group_idx]
+                    # eg:[5,6,7,9] -> {5:0, 6:1, 7:2, 9:3}
+                    rearrange_block_dict = {
+                        value: index
+                        for index, value in enumerate(rearrange_block_ids)  # type:ignore
+                    }
+                    for block_len, src_layer_base_addr, dst_layer_base_addr in zip(
+                        quant_block_lens, layer_local_quant_kv_addr, layer_remote_kv_base_addr
+                    ):
+                        for group_remote_block_id, group_local_block_id in zip(
+                            grouped_remote_block_ids, grouped_local_block_ids
+                        ):
+                            src = src_layer_base_addr + rearrange_block_dict[group_local_block_id[0]] * block_len
+                            dst = dst_layer_base_addr + group_remote_block_id[0] * block_len
+                            length = len(group_local_block_id) * block_len
+                            src_list.append(src)
+                            dst_list.append(dst)
+                            length_list.append(length)
+                else:
+                    for k, (src_layer_base_addr, dst_layer_base_addr) in enumerate(
+                        zip(layer_local_kv_base_addr, layer_remote_kv_base_addr)
+                    ):
+                        block_len = block_lens[k]
+                        for group_remote_block_id, group_local_block_id in zip(
+                            grouped_remote_block_ids, grouped_local_block_ids
+                        ):
+                            src = src_layer_base_addr + group_local_block_id[0] * block_len
+                            dst = dst_layer_base_addr + group_remote_block_id[0] * block_len
+                            length = len(group_local_block_id) * block_len
+                            src_list.append(src)
+                            dst_list.append(dst)
+                            length_list.append(length)
+
+
+    def _transfer_kv_cache(self, send_task: SendTask):
+        layer_name = send_task.layer_name
+        layer_group_idx = self.layer_metadata[layer_name].tensor_group_idx[0]
+        key = send_task.k_cache
+        value = send_task.v_cache
+        if self.pd_head_ratio > 1 and key is not None and value is not None:
+            with npu_stream_switch(self.resharding_stream):
+                key = key.view(-1, key.shape[-1])  # type:ignore
+                value = value.view(-1, key.shape[-1])  # type:ignore
+                self.k_buffer[: key.shape[0]].copy_(key)  # [:4, 128] ->
+                self.v_buffer[: value.shape[0]].copy_(value)
+        if send_task.k_quant_cache is not None:
+            with npu_stream_switch(self.resharding_stream):
+                key_quant = send_task.k_quant_cache
+                key_quant = key_quant.view(-1, key_quant.shape[-1])  # type:ignore
+                self.k_quant_buffer[: key_quant.shape[0]].copy_(key_quant)
+                value_quant = send_task.v_quant_cache
+                value_quant = value_quant.view(-1, value_quant.shape[-1])  # type:ignore
+                self.v_quant_buffer[: value_quant.shape[0]].copy_(value_quant)
+
+
+        if send_task.k_quant_cache is not None:
+            self.resharding_stream.synchronize()
+        elif self.pd_head_ratio == 1:
+
+        self, layer_name: str, kv_layer: list[torch.Tensor], attn_metadata: "AttentionMetadata", **kwargs
+
+
+        self.enable_kv_quant = (
+            vllm_config.quant_config.enable_fa_quant if vllm_config.quant_config is not None else False
+        )
+        self.pd_head_ratio = get_ascend_config().pd_head_ratio
+        self.num_head_replica = get_ascend_config().num_head_replica
+        self.resharding_stream = None
+        if self.pd_head_ratio > 1 or self.enable_kv_quant:
+            self.resharding_stream = torch.npu.Stream()
+
+
+
+        self.k_quant_buffer: torch.Tensor | None = None
+        self.v_quant_buffer: torch.Tensor | None = None
+
+    def create_kv_buffer(self, first_kv_cache_tuple):
+        alignment = 2 * 1024 * 1024
+        buffer_list = []
+        first_kv_cache = first_kv_cache_tuple[0]
+
+
+
+                -1, first_kv_cache.shape[-1]
+            )
+            buffer_list.append(self.k_buffer)
+            buffer_list.append(self.v_buffer)
+        if self.enable_kv_quant:
+            quant_k_cache_numel = first_kv_cache_tuple[0].numel() // 2
+            self.k_quant_buffer = torch.zeros(
+                quant_k_cache_numel + alignment, dtype=torch.int8, device=first_kv_cache.device
+            )
+            self.k_quant_buffer = align_memory(self.k_quant_buffer, alignment)[:quant_k_cache_numel].view(
+                -1, first_kv_cache.shape[-1]
+            )
+            quant_v_cache_numel = first_kv_cache_tuple[1].numel()
+            self.v_quant_buffer = torch.zeros(
+                quant_v_cache_numel + alignment, dtype=first_kv_cache.dtype, device=first_kv_cache.device
+            )
+            self.v_quant_buffer = align_memory(self.v_quant_buffer, alignment)[:quant_v_cache_numel].view(
+                -1, first_kv_cache_tuple[1].shape[-1]
+            )
+            buffer_list.append(self.k_quant_buffer)
+            buffer_list.append(self.v_quant_buffer)
+
+        for tensor in buffer_list:
+            assert tensor.data_ptr() % alignment == 0, "The address of the registered kv cache should be aligned to 2M"
+            ret_value = self.engine.register_memory(tensor.data_ptr(), tensor.numel())
+            logger.info(
+                f"Register memory for prefill when pd head ratio > 1 {tensor.data_ptr()} {tensor.numel()} {ret_value=}"
+            )
+            if ret_value != 0:
+                raise RuntimeError("Mooncake memory registration failed. ")
+
+    def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
+
+
+        lengths = []
+        use_kv_buffer = False
+        kv_buffer = None
+        for layer_name, kv_cache_tuple in kv_caches.items():
+            if isinstance(kv_cache_tuple, (list, tuple)) is False:
+                kv_cache_tuple = [kv_cache_tuple]
+            layer_kv_group_id = layer2group_ids[layer_name]
+            layer_kv_cache_spec = kv_cache_groups[layer_kv_group_id].kv_cache_spec
+            if isinstance(layer_kv_cache_spec, UniformTypeKVCacheSpecs):
+                layer_kv_cache_spec = layer_kv_cache_spec.kv_cache_specs[layer_name]
+
+            if (
+                self.pd_head_ratio > 1 and (isinstance(layer_kv_cache_spec, (FullAttentionSpec, SlidingWindowSpec)))
+            ) or self.enable_kv_quant:
+                self.attn_resharding_group_idx.add(layer_kv_group_id)
+                if use_kv_buffer is False:
+                    use_kv_buffer = True
+                    kv_buffer = kv_cache_tuple
+            single_layer_meta = LayerMetadata([], [], [], [])
+
+
+        if use_kv_buffer:
+            self.create_kv_buffer(kv_buffer)
+
+        num_attn_module = 2 if self.vllm_config.model_config.hf_text_config.model_type == "longcat_flash" else 1
+        mtp_layer_name = ""
+        for layer_name in kv_caches:
+
+
+            layer_metadata=self.layer_metadata,
+        )
+        if self.vllm_config.kv_transfer_config.is_kv_producer:
+            ready_event = threading.Event()
+            self.kv_send_layer_thread = KVCacheSendingLayerThread(
+                engine=self.engine,
+                vllm_config=self.vllm_config,
+                kv_cache_config=self.kv_cache_config,
+                kv_cache_specs=self.kv_cache_specs,
+                attn_resharding_group_idx=self.attn_resharding_group_idx,
+                total_layers=self.total_layers,
+                ready_event=ready_event,
+                tp_size=self.tp_size,
+                tp_rank=self.tp_rank,
+                pd_head_ratio=self.pd_head_ratio,
+                num_head_replica=self.num_head_replica,
+                layer_metadata=self.layer_metadata,
+                use_mla=self.use_mla,
+                k_buffer=self.k_buffer,
+                v_buffer=self.v_buffer,
+                enable_kv_quant=self.enable_kv_quant,
+                k_quant_buffer=self.k_quant_buffer,
+                v_quant_buffer=self.v_quant_buffer,
+                resharding_stream=self.resharding_stream,
+                callback_func=self.send_done_send_signal,
+            )
+            self.kv_send_layer_thread.start()
+            ready_event.wait()
+
+
+          
+            # update send task trans block info
+            if self.pd_head_ratio != 1 or self.enable_kv_quant:
+                send_task = metadata.send_task
+                send_task.group_rearrange_block_ids = [[] for _ in range(self.num_kv_cache_groups)]
+                send_task.group_num_blocks = [0 for _ in range(self.num_kv_cache_groups)]
+                send_task.group_num_tokens = [0 for _ in range(self.num_kv_cache_groups)]
+                send_task.group_block_table = [None for _ in range(self.num_kv_cache_groups)]
+                send_task.group_block_len_tensor = [None for _ in range(self.num_kv_cache_groups)]
+                send_task.group_seq_start_tensor = [None for _ in range(self.num_kv_cache_groups)]
+                device = self.k_buffer.device if self.k_buffer is not None else self.k_quant_buffer.device  # type: ignore
+
+    def save_kv_layer(
+        self,
+        layer_name: str,
+        kv_layer: list[torch.Tensor],
+        attn_metadata: "AttentionMetadata",
+        connector_metadata: MooncakeLayerwiseConnectorMetadata,
+        **kwargs,
+
+
+
+            quant_keys = None
+            quant_values = None
+            if self.enable_kv_quant and self.current_layer in self.vllm_config.quant_config.kvcache_quant_layers:
+                assert self.resharding_stream is not None
+                with npu_stream_switch(self.resharding_stream):
+                    reshape_cache_event.wait()
+                    device = self.k_quant_buffer.device  # type: ignore
+                    layer = self.vllm_config.compilation_config.static_forward_context[layer_name]
+                    # Initialize buffers
+                    # [num_tokens, kv_head, head_dim]
+                    quant_key = torch.empty(
+                        (send_task.group_num_tokens[layer_group_idx], *kv_layer[0].size()[-2:]),
+                        dtype=kv_layer[0].dtype,
+                        device=device,
+                    )
+                    quant_values = torch.empty(
+                        (send_task.group_num_tokens[layer_group_idx], *kv_layer[1].size()[-2:]),
+                        dtype=kv_layer[1].dtype,
+                        device=device,
+                    )
+
+                    # Load cache data into buffers
+                    torch_npu.atb.npu_paged_cache_load(
+                        kv_layer[0],
+                        kv_layer[1],
+                        send_task.group_block_table[layer_group_idx],
+                        send_task.group_block_len_tensor[layer_group_idx],
+                        seq_starts=send_task.group_seq_start_tensor[layer_group_idx],
+                        key=quant_key,
+                        value=quant_values,
+                    )
+                    quant_keys = torch.ops.vllm.quantize(
+                        quant_key, layer.fak_descale, layer.fak_descale_reciprocal, layer.fak_offset
+                    )
+                    quant_keys = self.trans_nd_to_nz(quant_keys, layer_group_idx)
+                    quant_values = self.trans_nd_to_nz(quant_values, layer_group_idx)
+
+            assert self.kv_send_layer_thread is not None
+            assert reshape_cache_event is not None
+            layer_send_task = SendTask(
+                wait_event=reshape_cache_event,
+                k_cache=keys,
+                v_cache=values,
+                k_quant_cache=quant_keys,
+                v_quant_cache=quant_values,
+                layer_idx=self.current_layer,
+                layer_name=layer_name,
+                group_rearrange_block_ids=send_task.group_rearrange_block_ids,
+            )
+            for req_id, req_meta in connector_metadata.requests.items():
+                if len(req_meta.local_block_ids[layer_group_idx]) == 0:
+                    continue
+                req_meta_update = self.update_decoder_info(req_id, req_meta)
+                logger.debug(f"Add request {req_id} to kv send layer thread. {req_meta_update=}")
+                layer_send_task.send_request[req_id] = req_meta_update
+
+            self.kv_send_layer_thread.send_queue.put(layer_send_task)
+            self.current_layer += 1
+
+    def trans_nd_to_nz(self, cache_tensor: torch.Tensor, layer_group_idx: int):
+        head_num, head_dim = cache_tensor.shape[-2], cache_tensor.shape[-1]
+        cache_tensor = cache_tensor.view(-1, self.block_size[layer_group_idx], head_num * head_dim)
+
+        batch = cache_tensor.shape[:-2]
+        a, b = cache_tensor.shape[-2], cache_tensor.shape[-1]
+
+        dtype = cache_tensor.dtype
+        if dtype == torch.int8:
+            a0, b0 = 16, 32
+        else:
+            a0, b0 = 16, 16
+
+        nz_shape = list(batch) + [math.ceil(b / b0), math.ceil(a / a0), a0, b0]
+
+        # Generate the axis order for the transpose operation.
+        offset = len(cache_tensor.shape) - 2
+        base = [2, 0, 1, 3]
+        array_trans = [i for i in range(offset)] + [i + offset for i in base]
+        # Perform shape transformation and transpose operation.
+        *_, n1, m1, m0, n0 = nz_shape
+        cache_tensor = cache_tensor.reshape(nz_shape[:-4] + [m1, m0, n1, n0])
+        cache_tensor = cache_tensor.permute(*array_trans)
+        cache_tensor = cache_tensor.reshape(-1, head_num, head_dim)
+        return cache_tensor
+
