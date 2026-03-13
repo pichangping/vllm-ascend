@@ -11,6 +11,21 @@ from vllm_ascend.attention.utils import (
     wait_for_kv_layer_from_connector,
 )
 
+def enabling_fa_quant(vllm_config: VllmConfig, layer_name) -> bool:
+    is_decode_instance = (
+        vllm_config.kv_transfer_config is not None
+        and vllm_config.kv_transfer_config.is_kv_consumer
+        and not vllm_config.kv_transfer_config.is_kv_producer
+    )
+    quant_config = vllm_config.quant_config
+    enable_fa_quant = quant_config.enable_fa_quant if quant_config is not None else False
+    fa_quant_layer = False
+    if is_decode_instance and enable_fa_quant:
+        id = "".join(re.findall(r"\.(\d+)\.", layer_name))
+        if int(id) in quant_config.kvcache_quant_layers:
+            fa_quant_layer = True
+    return fa_quant_layer
+
 from vllm_ascend.quantization.methods.w8a8_static import AscendW8A8LinearMethod
 
 
