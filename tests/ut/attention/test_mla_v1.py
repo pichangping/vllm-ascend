@@ -294,5 +294,252 @@ from vllm_ascend.quantization.methods.w8a8_static import AscendW8A8LinearMethod
                 decode_preprocess_res.dequant_scale_q_nope,
 
 
+mla.py
+            layer_name=f"{prefix}.attn",
+
+import vllm_ascend.patch.worker.patch_weight_utils  # noqa
+
+
+
+import logging
+import sys
+
+from vllm.model_executor.model_loader.weight_utils import maybe_remap_kv_scale_name
+
+logger = logging.getLogger(__name__)
+
+
+class ImportPatchDecorator:
+    """Import patch decorator"""
+
+    _patches = {}
+
+    @classmethod
+    def register(cls, module_name):
+        """Decorator for registering module patches"""
+
+        def decorator(func):
+            cls._patches[module_name] = func
+            return func
+
+        return decorator
+
+    @classmethod
+    def apply_patches(cls):
+        """Apply all patches"""
+        for module_name, patch_func in cls._patches.items():
+            if module_name in sys.modules:
+                module = sys.modules[module_name]
+                try:
+                    patch_func(module)
+                except Exception as e:
+                    logger.error(f"Patch application failed {module_name}: {e}")
+
+
+# 使用装饰器注册补丁
+@ImportPatchDecorator.register("vllm.model_executor.models.deepseek_v2")
+def patch_deepseek(module):
+    ori_maybe_remap_kv_scale_name = maybe_remap_kv_scale_name
+
+    def new_remap(name: str, params_dict: dict):
+        name = ori_maybe_remap_kv_scale_name(name, params_dict)
+
+        replace_scale_names = ["fa_q.scale", "fa_k.scale", "fa_v.scale", "fa_q.offset", "fa_k.offset", "fa_v.offset"]
+
+        for scale_name in replace_scale_names:
+            if name.endswith(scale_name):
+                remap_name = name.replace(scale_name, f"mla_attn.mla_attn.{scale_name}")
+                if remap_name in params_dict:
+                    return remap_name
+                else:
+                    return remap_name.replace(".mla_attn", "")
+
+        return name
+
+    if hasattr(module, "maybe_remap_kv_scale_name"):
+        module._original_maybe_remap_kv_scale_name = module.maybe_remap_kv_scale_name
+        module.maybe_remap_kv_scale_name = new_remap
+
+
+@ImportPatchDecorator.register("vllm.model_executor.model_loader.weight_utils")
+def patch_weight_utils(module):
+    if "vllm.model_executor.models.deepseek_v2" in sys.modules:
+        deepseek = sys.modules["vllm.model_executor.models.deepseek_v2"]
+        if hasattr(deepseek, "maybe_remap_kv_scale_name"):
+            module.maybe_remap_kv_scale_name = deepseek.maybe_remap_kv_scale_name
+
+
+original_import = __builtins__["__import__"]
+
+
+def patched_import(name, globals=None, locals=None, fromlist=(), level=0):
+    module = original_import(name, globals, locals, fromlist, level)
+
+    if name in ImportPatchDecorator._patches:
+        try:
+            ImportPatchDecorator._patches[name](module)
+        except Exception as e:
+            logger.error(f"Patch application failed during import {name}: {e}")
+
+    return module
+
+
+__builtins__["__import__"] = patched_import
+
+ImportPatchDecorator.apply_patches()
+
+
+
+import glob
+import json
+import os
+import re
+
+from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
+
+
+
+MODELSLIM_CONFIG_FILENAME = "quant_model_description.json"
+
+    def __init__(self, quant_config: dict[str, Any] | None = None):
+        super().__init__()
+        self.quant_description = quant_config if quant_config is not None else {}
+        # TODO(whx): remove this adaptation after adding "shared_head"
+        # to prefix of DeepSeekShareHead in vLLM.
+        extra_quant_dict = {}
+        for k in self.quant_description:
+            if "shared_head" in k:
+                new_k = k.replace(".shared_head.", ".")
+                extra_quant_dict[new_k] = self.quant_description[k]
+            if "weight_packed" in k:
+                new_k = k.replace("weight_packed", "weight")
+                extra_quant_dict[new_k] = self.quant_description[k]
+        self.quant_description.update(extra_quant_dict)
+        # Initialize attributes for type checking
+        self.model_type: str | None = None
+        self.hf_to_vllm_mapper: WeightsMapper | None = None
+        self.vllm_to_hf_mapper: WeightsMapper | None = None
+        self._apply_extra_quant_adaptations()
+
+        elif isinstance(layer, AttentionLayerBase) and self.is_fa_quant_layer(prefix):
+
+
+    def is_fa_quant_layer(self, prefix):
+        if self.enable_fa_quant:
+            _id = int("".join(re.findall(r"\.(\d+)\.", prefix)))
+            if _id in self.kvcache_quant_layers:
+                return True
+        return False
+
+    def maybe_update_config(self, model_name: str) -> None:
+        """Load the ModelSlim quantization config from model directory.
+
+        This method is called by vllm after get_quant_config() returns
+        successfully. Since we return an empty list from get_config_filenames()
+        to bypass vllm's built-in file lookup, we do the actual config loading
+        here and provide user-friendly error messages when the config is missing.
+
+        Args:
+            model_name: Path to the model directory or model name.
+        """
+        # If quant_description is already populated (e.g. from from_config()),
+        # there is nothing to do.
+        if self.quant_description:
+            return
+
+        # Try to find and load the ModelSlim config file
+        if os.path.isdir(model_name):
+            config_path = os.path.join(model_name, MODELSLIM_CONFIG_FILENAME)
+            if os.path.isfile(config_path):
+                with open(config_path) as f:
+                    self.quant_description = json.load(f)
+                self._apply_extra_quant_adaptations()
+                self._add_kvcache_quant_metadata()
+                return
+
+            # Check if there are any json files at all to help diagnose
+            json_files = glob.glob(os.path.join(model_name, "*.json"))
+            json_names = [os.path.basename(f) for f in json_files]
+        else:
+            json_names = []
+
+        # Config file not found - raise a friendly error message
+        raise ValueError(
+            "\n"
+            + "=" * 80
+            + "\n"
+            + "ERROR: ModelSlim Quantization Config Not Found\n"
+            + "=" * 80
+            + "\n"
+            + "\n"
+            + f"You have enabled '--quantization {ASCEND_QUANTIZATION_METHOD}' "
+            + "(ModelSlim quantization),\n"
+            + f"but the model at '{model_name}' does not contain the required\n"
+            + f"quantization config file ('{MODELSLIM_CONFIG_FILENAME}').\n"
+            + "\n"
+            + "This usually means the model weights are NOT quantized by "
+            + "ModelSlim.\n"
+            + "\n"
+            + "Please choose one of the following solutions:\n"
+            + "\n"
+            + "  Solution 1: Remove the quantization option "
+            + "(for float/unquantized models)\n"
+            + "  "
+            + "-" * 58
+            + "\n"
+            + f"    Remove '--quantization {ASCEND_QUANTIZATION_METHOD}' from "
+            + "your command if you want to\n"
+            + "    run the model with the original (float) weights.\n"
+            + "\n"
+            + "    Example:\n"
+            + f"      vllm serve {model_name}\n"
+            + "\n"
+            + "  Solution 2: Quantize your model weights with ModelSlim first\n"
+            + "  "
+            + "-" * 58
+            + "\n"
+            + "    Use the ModelSlim tool to quantize your model weights "
+            + "before deployment.\n"
+            + "    After quantization, the model directory should contain "
+            + f"'{MODELSLIM_CONFIG_FILENAME}'.\n"
+            + "    For more information, please refer to:\n"
+            + "    https://gitee.com/ascend/msit/tree/master/msmodelslim\n"
+            + "\n"
+            + (f"  (Found JSON files in model directory: {json_names})\n" if json_names else "")
+            + "=" * 80
+        )
+
+    def _apply_extra_quant_adaptations(self) -> None:
+        """Apply extra adaptations to the quant_description dict.
+
+        This handles known key transformations such as shared_head and
+        weight_packed mappings.
+        """
+        extra_quant_dict = {}
+        for k in self.quant_description:
+            if "shared_head" in k:
+                new_k = k.replace(".shared_head.", ".")
+                extra_quant_dict[new_k] = self.quant_description[k]
+            if "weight_packed" in k:
+                new_k = k.replace("weight_packed", "weight")
+                extra_quant_dict[new_k] = self.quant_description[k]
+        self.quant_description.update(extra_quant_dict)
+
+    def get_scaled_act_names(self) -> list[str]:
+        return []
+
+    def _add_kvcache_quant_metadata(self):
+        fa_quant_type = self.quant_description.get("fa_quant_type", "")
+        self.enable_fa_quant = fa_quant_type != ""
+        self.kvcache_quant_layers = []
+        if self.enable_fa_quant:
+            for key in self.quant_description:
+                if "fa_k.scale" in key:
+                    _id = "".join(re.findall(r"\.(\d+)\.", key))
+                    self.kvcache_quant_layers.append(int(_id))
+
+from .kv_c8 import AscendFAQuantAttentionMethod
+
+
 
 
