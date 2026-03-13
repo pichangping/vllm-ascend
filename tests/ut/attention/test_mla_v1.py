@@ -10,6 +10,8 @@ from vllm_ascend.attention.utils import (
     transdata,
     wait_for_kv_layer_from_connector,
 )
+Co-authored-by: kunpengW-code <1289706727@qq.com>,
+Co-authored-by: linsheng1 <1950916997@qq.com>
 
 def enabling_fa_quant(vllm_config: VllmConfig, layer_name) -> bool:
     is_decode_instance = (
