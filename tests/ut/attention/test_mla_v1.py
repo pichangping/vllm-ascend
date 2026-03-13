@@ -541,5 +541,51 @@ MODELSLIM_CONFIG_FILENAME = "quant_model_description.json"
 from .kv_c8 import AscendFAQuantAttentionMethod
 
 
+        self.kvbytes = {}
+
+                        if layer_name in self.kvbytes:
+                            head_size = (
+                                self.model_config.hf_text_config.qk_rope_head_dim * self.kvbytes[layer_name][1]
+                                + self.model_config.hf_text_config.kv_lora_rank * self.kvbytes[layer_name][0]
+                            )
+                        else:
+                            head_size = (
+                                self.model_config.hf_text_config.qk_rope_head_dim
+                                + self.model_config.hf_text_config.kv_lora_rank
+                            )
+                            
+                    elif layer_name in self.kvbytes:
+                        k_tensor_split_factor = head_size / (
+                            self.model_config.hf_text_config.kv_lora_rank * self.kvbytes[layer_name][0]
+                        )
+                        v_tensor_split_factor = head_size / (
+                            self.model_config.hf_text_config.qk_rope_head_dim * self.kvbytes[layer_name][1]
+                        )
+
+                    if layer_name in self.kvbytes:
+                        k_cache = raw_k_tensor.view(dtype).view(k_shape)
+                        v_cache = raw_v_tensor.view(self.vllm_config.model_config.dtype).view(v_shape)
+                    else:
+                        k_cache = raw_k_tensor.view(dtype).view(k_shape)
+                        v_cache = raw_v_tensor.view(dtype).view(v_shape)
 
 
+        def dtype_to_bytes(dtype: torch.dtype) -> int:
+            """将 torch.dtype 转换为字节数"""
+            return torch.tensor([], dtype=dtype).element_size()
+
+                elif getattr(attn_module.impl, "fa_quant_layer", False):
+                    block_size = self.vllm_config.cache_config.block_size
+                    head_size = attn_module.head_size + attn_module.qk_rope_head_dim
+                    kv_cache_spec[layer_name] = MLAAttentionSpec(
+                        block_size=block_size,
+                        num_kv_heads=attn_module.num_kv_heads,
+                        head_size=head_size,
+                        dtype=attn_module.impl.dtype,
+                        cache_dtype_str=None,
+                    )
+                    if layer_name not in self.kvbytes:
+                        self.kvbytes[layer_name] = [
+                            dtype_to_bytes(attn_module.impl.dtype),
+                            dtype_to_bytes(self.vllm_config.model_config.dtype),
+                        ]
