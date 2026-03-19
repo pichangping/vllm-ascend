@@ -19,7 +19,6 @@ from threading import Lock
 from unittest import mock
 
 import torch
-from vllm.config import (CompilationConfig, ModelConfig, ParallelConfig,
                          VllmConfig)
 
 from tests.ut.base import TestBase
