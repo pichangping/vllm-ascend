@@ -1,3 +1,4 @@
+ms-c03ed185-c9ef-40fc-9c97-55267f35a7de   vllm-ascend/GLM-4.7-W8A8C8
 # bash fonts colors
 cyan='\e[96m'
 yellow='\e[33m'
