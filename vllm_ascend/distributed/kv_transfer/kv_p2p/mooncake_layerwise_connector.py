@@ -1629,7 +1629,7 @@ class MooncakeLayerwiseConnectorWorker:
                     and (isinstance(self.kv_cache_specs[layer_group_idx], (FullAttentionSpec, SlidingWindowSpec)))
                     and send_task.group_num_blocks[layer_group_idx] > 0
                 )
-                or self.enable_c8_quant
+                or (self.enable_c8_quant and self.current_layer in self.vllm_config.quant_config.c8_quant_layers)
                 or (self.enable_kv_quant and self.current_layer in self.vllm_config.quant_config.kvcache_quant_layers)
             ):
                 assert self.resharding_stream is not None
@@ -1679,7 +1679,7 @@ class MooncakeLayerwiseConnectorWorker:
                         values = values.reshape(-1, *kv_layer[1].shape[2:])
 
                         (keys, values) = kv_alltoall_and_rearrange(self.pd_head_ratio, keys, values)
-                    if self.enable_c8_quant:
+                    if self.enable_c8_quant and self.current_layer in self.vllm_config.quant_config.c8_quant_layers:
                         layer = self.vllm_config.compilation_config.static_forward_context[layer_name]
                         quant_keys = torch.clamp(
                             torch.round(keys * layer._c8_k_inv_scale + layer._c8_k_offset),

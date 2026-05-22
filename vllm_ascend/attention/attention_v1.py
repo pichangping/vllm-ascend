@@ -719,7 +719,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         next_tokens = 0 if self.sliding_window else SWA_INT_MAX
 
         extra_args = {}
-        if self.enable_c8_quant:
+        if self.enable_c8_quant and self.vllm_config.quant_config.is_c8_quant_layers(layer.prefix):
             extra_args = {
                 "key_antiquant_scale": layer._c8_k_aq_scale,
                 "key_antiquant_offset": layer._c8_k_aq_offset,
@@ -783,7 +783,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             pre_tokens,
             next_tokens,
         )
-        if self.enable_c8_quant:
+        if self.enable_c8_quant and self.vllm_config.quant_config.is_c8_quant_layers(layer.prefix):
             attn_params = attn_params + (
                 weak_ref_tensors(layer._c8_k_aq_scale),
                 weak_ref_tensors(layer._c8_k_aq_offset),
