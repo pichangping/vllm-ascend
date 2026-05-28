@@ -118,7 +118,6 @@ class AscendC8KVCacheAttentionMethod(AscendAttentionScheme):
 
             layer.impl.__class__ = AscendC8AttentionBackendImpl
         dtype = torch.get_default_dtype()
-        layer.prefix = self.prefix
         layer.k_cache_scale = torch.nn.Parameter(torch.ones(1, dtype=dtype), requires_grad=False)
         layer.k_cache_scale.weight_loader = _c8_kv_scale_weight_loader
         layer.k_cache_offset = torch.nn.Parameter(torch.zeros(1, dtype=dtype), requires_grad=False)
