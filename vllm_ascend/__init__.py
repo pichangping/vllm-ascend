@@ -39,6 +39,15 @@ def register_model():
 
 
 def enable_sfa_quant(vllm_config) -> bool:
+    model_config = getattr(vllm_config, "model_config", None)
+    if model_config is None:
+        return False
+    hf_text_config = getattr(model_config, "hf_text_config", None)
+    if hf_text_config is None:
+        return False
+    return hasattr(hf_text_config, "index_topk") and not hasattr(hf_text_config, "compress_ratios")
+
+def enable_sfa_quant(vllm_config) -> bool:
     return (
         hasattr(vllm_config.model_config, "hf_text_config")
         and hasattr(vllm_config.model_config.hf_text_config, "index_topk")
