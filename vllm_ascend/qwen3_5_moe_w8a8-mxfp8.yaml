@@ -67,5 +67,5 @@ spec:
   save:
   - type: ascendv1_saver
     part_file_size: 4
-  dataset: calibImages
-
+  dataset: "calibImages"  # Short name: auto-searches in lab_calib/
+  default_text: "Describe this image in detail."
