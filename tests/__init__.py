@@ -395,3 +395,8 @@
                         indexer_scale_cache_shape = (*indexer_scale_cache_shape[:-1],
                             group_spec.head_size * 2 // 64, 2)
 
+
+
+    @property
+    def enable_sparse_li_c4(self) -> bool:
+        return self.impl.enable_sparse_li_c4
